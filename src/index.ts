@@ -70,11 +70,12 @@ async function run(): Promise<void> {
     const upgradeType = normalizeUpgradeType(core.getInput("upgradeType"));
 
     const lastTag = core.getInput("lastTag"); // for main
-    const lastMainTag = core.getInput("lastMainTag"); // for develop
-    const lastDevelopTag = core.getInput("lastDevelopTag"); // for develop
+    const lastMainTag = core.getInput("lastMainTag"); // for branch base
+    const lastDevelopTag = core.getInput("lastDevelopTag"); // last tag on current branch
 
     core.info(`Using baseBranch='${baseBranch}'`);
     core.info(`Using upgradeType='${upgradeType}'`);
+
     if (baseBranch === "main") {
       core.info(`Using lastTag='${lastTag}'`);
       const parsed = parseSemver(lastTag) ?? { major: 0, minor: 1, patch: 0 };
@@ -95,7 +96,6 @@ async function run(): Promise<void> {
       }
       let newVersion = formatSemver(next);
 
-      // ensure uniqueness; if exists, keep patch++ until free
       newVersion = await bumpForUniqueness(newVersion, (v) => {
         const m = v.match(SEMVER_RE)!;
         const p = +m[3] + 1;
@@ -108,36 +108,35 @@ async function run(): Promise<void> {
       return;
     }
 
-    // develop or any non-main branch
+    // --- Dynamic Branch Logic ---
     core.info(`Using lastMainTag='${lastMainTag}'`);
-    core.info(`Using lastDevelopTag='${lastDevelopTag}'`);
+    core.info(`Using lastBranchTag='${lastDevelopTag}'`);
 
     const mainBase = parseSemver(lastMainTag) ?? { major: 0, minor: 1, patch: 0 };
     const baseVersion = formatSemver(mainBase);
-    if (!parseSemver(lastMainTag)) {
-      core.info("No main tag found, using base: 0.1.0");
-    } else {
-      core.info(`Using main tag as base: ${baseVersion}`);
-    }
 
-    // build number from lastDevelopTag if matching base
+    // Regex-safe branch name escaping
+    const escapedBranch = baseBranch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
     let build = 0;
-    const devPattern = new RegExp(`^${mainBase.major}\\.${mainBase.minor}\\.${mainBase.patch}-develop\\.(\\d+)$`);
-    const m = (lastDevelopTag || "").trim().match(devPattern);
+    const branchPattern = new RegExp(`^${mainBase.major}\\.${mainBase.minor}\\.${mainBase.patch}-${escapedBranch}\\.(\\d+)$`);
+    
+    const m = (lastDevelopTag || "").trim().match(branchPattern);
     if (m) {
       build = +m[1];
-      core.info(`Found existing build number: ${build}`);
+      core.info(`Found existing build number for ${baseBranch}: ${build}`);
     } else {
-      core.info("No matching develop tag found, starting build at 0");
+      core.info(`No matching tag for branch ${baseBranch} found, starting build at 0`);
     }
     build += 1;
 
-    const mk = (b: number) => `${baseVersion}-develop.${b}`;
+    const mk = (b: number) => `${baseVersion}-${baseBranch}.${b}`;
     let newVersion = mk(build);
 
-    // ensure uniqueness by increasing build until tag is free
+    // Ensure uniqueness by increasing build until tag is free
     newVersion = await bumpForUniqueness(newVersion, (v) => {
-      const x = v.match(/^(.+?-develop\.)(\d+)$/)!;
+      const regex = new RegExp(`^(.+?-` + escapedBranch + `\\.)(\\d+)$`);
+      const x = v.match(regex)!;
       return `${x[1]}${+x[2] + 1}`;
     });
 
