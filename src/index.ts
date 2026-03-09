@@ -28,23 +28,25 @@ import { exec } from "@actions/exec";
 type Semver = { major: number; minor: number; patch: number };
 
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)$/;
+
 function parseSemver(tag: string | undefined | null): Semver | null {
   if (!tag) return null;
-  const m = tag.trim().match(SEMVER_RE);
+  const cleanTag = tag.trim().split('-')[0];
+  const m = cleanTag.match(SEMVER_RE);
   if (!m) return null;
   return { major: +m[1], minor: +m[2], patch: +m[3] };
 }
 
 async function tagExists(tag: string): Promise<boolean> {
-  let exitCode = 0;
   try {
-    exitCode = await exec("git", ["rev-parse", `refs/tags/${tag}`], {
+    const exitCode = await exec("git", ["rev-parse", `refs/tags/${tag}`], {
       silent: true,
+      ignoreReturnCode: true,
     });
+    return exitCode === 0;
   } catch {
     return false;
   }
-  return exitCode === 0;
 }
 
 function normalizeUpgradeType(x: string | undefined): "MAJOR" | "MINOR" | "PATCH" {
@@ -56,10 +58,22 @@ function formatSemver(s: Semver): string {
   return `${s.major}.${s.minor}.${s.patch}`;
 }
 
-async function bumpForUniqueness(version: string, bumpPatch: (v: string) => string): Promise<string> {
+async function bumpForUniqueness(version: string, isMain: boolean): Promise<string> {
   let v = version;
   while (await tagExists(v)) {
-    v = bumpPatch(v);
+    if (isMain) {
+      const parts = v.split('.');
+      parts[2] = String(+parts[2] + 1);
+      v = parts.join('.');
+    } else {
+      const parts = v.split('.');
+      const last = parts.pop()!;
+      if (!isNaN(Number(last))) {
+        v = [...parts, String(+last + 1)].join('.');
+      } else {
+        v = `${v}.1`;
+      }
+    }
   }
   return v;
 }
@@ -69,80 +83,55 @@ async function run(): Promise<void> {
     const baseBranch = core.getInput("baseBranch", { required: true }).trim();
     const upgradeType = normalizeUpgradeType(core.getInput("upgradeType"));
 
-    const lastTag = core.getInput("lastTag"); // for main
-    const lastMainTag = core.getInput("lastMainTag"); // for branch base
-    const lastDevelopTag = core.getInput("lastDevelopTag"); // last tag on current branch
+    const lastTag = core.getInput("lastTag");
+    const lastMainTag = core.getInput("lastMainTag");
+    const lastDevelopTag = core.getInput("lastDevelopTag");
 
     core.info(`Using baseBranch='${baseBranch}'`);
     core.info(`Using upgradeType='${upgradeType}'`);
 
     if (baseBranch === "main") {
-      core.info(`Using lastTag='${lastTag}'`);
+      core.info(`Processing main branch release. lastTag='${lastTag}'`);
       const parsed = parseSemver(lastTag) ?? { major: 0, minor: 1, patch: 0 };
-      if (!parseSemver(lastTag)) {
-        core.info("No existing main tag found, starting with 0.1.0");
-      } else {
-        core.info(`Parsed existing main tag: ${formatSemver(parsed)}`);
-      }
-
+      
       let next: Semver = { ...parsed };
       switch (upgradeType) {
-        case "MAJOR":
-          next.major += 1; next.minor = 0; next.patch = 0; break;
-        case "MINOR":
-          next.minor += 1; next.patch = 0; break;
-        default:
-          next.patch += 1; break;
+        case "MAJOR": next.major += 1; next.minor = 0; next.patch = 0; break;
+        case "MINOR": next.minor += 1; next.patch = 0; break;
+        default:      next.patch += 1; break;
       }
-      let newVersion = formatSemver(next);
-
-      newVersion = await bumpForUniqueness(newVersion, (v) => {
-        const m = v.match(SEMVER_RE)!;
-        const p = +m[3] + 1;
-        return `${m[1]}.${m[2]}.${p}`;
-      });
-
+      
+      const newVersion = await bumpForUniqueness(formatSemver(next), true);
       core.setOutput("version", newVersion);
       core.exportVariable("NEW_VERSION", newVersion);
-      core.info(`NEW_VERSION=${newVersion}`);
+      core.info(`Resulting NEW_VERSION=${newVersion}`);
       return;
     }
 
-    // --- Dynamic Branch Logic ---
-    core.info(`Using lastMainTag='${lastMainTag}'`);
-    core.info(`Using lastBranchTag='${lastDevelopTag}'`);
+    core.info(`Processing branch release. lastMainTag='${lastMainTag}', lastBranchTag='${lastDevelopTag}'`);
 
     const mainBase = parseSemver(lastMainTag) ?? { major: 0, minor: 1, patch: 0 };
     const baseVersion = formatSemver(mainBase);
-
-    // Regex-safe branch name escaping
     const escapedBranch = baseBranch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     let build = 0;
-    const branchPattern = new RegExp(`^${mainBase.major}\\.${mainBase.minor}\\.${mainBase.patch}-${escapedBranch}\\.(\\d+)$`);
+    const branchPattern = new RegExp(`-${escapedBranch}\\.(\\d+)$`);
     
     const m = (lastDevelopTag || "").trim().match(branchPattern);
     if (m) {
       build = +m[1];
       core.info(`Found existing build number for ${baseBranch}: ${build}`);
     } else {
-      core.info(`No matching tag for branch ${baseBranch} found, starting build at 0`);
+      core.info(`No matching tag for branch ${baseBranch} found. Starting at build 0`);
     }
-    build += 1;
 
-    const mk = (b: number) => `${baseVersion}-${baseBranch}.${b}`;
-    let newVersion = mk(build);
-
-    // Ensure uniqueness by increasing build until tag is free
-    newVersion = await bumpForUniqueness(newVersion, (v) => {
-      const regex = new RegExp(`^(.+?-` + escapedBranch + `\\.)(\\d+)$`);
-      const x = v.match(regex)!;
-      return `${x[1]}${+x[2] + 1}`;
-    });
+    const candidate = `${baseVersion}-${baseBranch}.${build + 1}`;
+    const newVersion = await bumpForUniqueness(candidate, false);
 
     core.setOutput("version", newVersion);
     core.exportVariable("NEW_VERSION", newVersion);
-    core.info(`NEW_VERSION=${newVersion}`);
+    core.info(`Resulting NEW_VERSION=${newVersion}`);
+
   } catch (err: any) {
     core.setFailed(err?.message ?? String(err));
   }
