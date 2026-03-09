@@ -4,34 +4,23 @@
   "private": true,
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && ncc build dist-ts/index.js -o dist",
-    "prebuild": "rimraf dist dist-ts && tsc -p tsconfig.json --outDir dist-ts"
+    "clean": "npx rimraf dist dist-ts",
+    "compile": "npx tsc -p tsconfig.json",
+    "bundle": "npx ncc build dist-ts/index.js -o dist --minify",
+    "build": "npm run clean && npm run compile && npm run bundle"
   },
   "dependencies": {
-    "@actions/exec": "^2.0.0",
-    "@actions/core": "^2.0.2"
+    "@actions/core": "^2.0.2",
+    "@actions/exec": "^2.0.0"
   },
   "devDependencies": {
-    "@types/node": "^24.3.0",
+    "@types/node": "^20.0.0",
     "@vercel/ncc": "^0.38.4",
-    "eslint": "^9.39.0",
-    "prettier": "^3.8.1",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
     "rimraf": "^6.1.2",
     "ts-node": "^10.9.2",
     "tslib": "^2.6.3",
-    "typescript": "^5.9.3"
-  },
-  "description": "This GitHub Action generates a semantic version based on a baseTag, headTag and upgradeType. It can be used to determine the next version number for a project based on the changes made between two tags.",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Interguess/semver-action.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/Interguess/semver-action/issues"
-  },
-  "homepage": "https://github.com/Interguess/semver-action"
+    "typescript": "^5.0.0"
+  }
 }
