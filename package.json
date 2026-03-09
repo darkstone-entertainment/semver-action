@@ -4,10 +4,8 @@
   "private": true,
   "main": "dist/index.js",
   "scripts": {
-    "clean": "npx rimraf dist dist-ts",
-    "compile": "npx tsc -p tsconfig.json",
-    "bundle": "npx ncc build dist-ts/index.js -o dist --minify",
-    "build": "npm run clean && npm run compile && npm run bundle"
+    "build": "npm run clean && tsc && npx ncc build dist-ts/index.js -o dist --minify",
+    "clean": "node -e \"const fs = require('fs'); ['dist', 'dist-ts'].forEach(d => fs.rmSync(d, { recursive: true, force: true }))\""
   },
   "dependencies": {
     "@actions/core": "^2.0.2",
